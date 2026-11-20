@@ -2,8 +2,8 @@
 
 > 本文件属于 `rmcs_terminal_bridge` 仓，不属于 Alliance-Terminal；路径 `rmcs_terminal_bridge/docs/design.md`。
 >
-> 状态：v0.3（D0 骨架 + vendored `teleop_ipc`；D1+ 未开始）
-> 日期：2026-11-20
+> 状态：v0.8（D0–D4 功能完成：header-only codec/Link、Rx/Tx 在 component.cpp、测试组件在 test_components.cpp、`bridge_link_test`、组件/launch 联调；D3 CI、D5 运行时待做）
+> 日期：2026-11-21
 > 线格式契约：本仓 [`docs/ipc-protocol.md`](ipc-protocol.md)（与 `Alliance-Terminal/docs/ipc-protocol.md` 同内容；修改必须同步对端）
 > 关联：RMCS 的 `rmcs_executor::Component`、`rmcs_bringup` 的 executor YAML、`rmcs-runtime` 镜像
 >
@@ -27,7 +27,7 @@
 | 依赖 | 仓内 vendor `third_party/teleop_ipc`（Apache-2.0 快照；手动同步，构建不访问 Alliance-Terminal） |
 | 许可证 | GPL-3.0-only（与 RMCS 一致；链接 `rmcs_executor`） |
 | 部署 | `rmcs-runtime`（root）：宿主目录 0700、socket 0666、桥 `allowed_uid=1000`；节点 `allowed_peer_uid=0` |
-| 集成 | 子模块 `rmcs_ws/src/rmcs_terminal_bridge`；插件描述导出到 `rmcs_executor`；operator 的 YAML 加一行 |
+| 集成 | 手动拉取到 `rmcs_ws/src/rmcs_terminal_bridge`（不强制子模块）；插件描述导出到 `rmcs_executor`；operator 的 YAML 加一行 |
 | 联调 | **先于客户端 B3/B4**：客户端 `ipc_probe` + 本仓 `bridge_link_test` / `TerminalTestSource`/`Sink`，分 Link → RMCS executor → rmcs-runtime 三级 |
 
 ---
@@ -108,25 +108,21 @@ rmcs_terminal_bridge/
 ├─ package.xml                  GPL-3.0-only；depend rmcs_executor/rclcpp/pluginlib
 ├─ CMakeLists.txt               colcon/ament；add_subdirectory(third_party/teleop_ipc)；pluginlib 导出
 ├─ third_party/teleop_ipc/      vendor 快照（Apache-2.0；见 ORIGIN.md）
-├─ plugins.xml                  生产：只导出 TerminalBridgeRx
+├─ plugins.xml                  导出 Rx + 测试源/汇（生产 YAML 不列测试组件）
 ├─ include/rmcs_terminal_bridge/
 │  ├─ types.hpp                 数据段类型（作者包也 include 这个）
-│  ├─ link.hpp                  无 ROS 的核心：Listener/Session/codec/节奏/计数
-│  ├─ terminal_bridge_rx.hpp    owner 组件
-│  └─ terminal_bridge_tx.hpp    partner 组件
+│  ├─ payload_codec.hpp         官方 envelope codec（inline）
+│  └─ link.hpp                  无 ROS 核心：Listener/Session/节奏/计数（inline）
 ├─ src/
-│  ├─ link.cpp
-│  ├─ payload_codec.cpp         官方 CustomControl/CustomByteBlock 编解码
-│  └─ component.cpp             PLUGINLIB_EXPORT_CLASS(TerminalBridgeRx)
+│  ├─ component.cpp             生产 Rx/Tx + pluginlib 导出（按 rmcs_core 风格）
+│  └─ test_components.cpp       TestSource/Sink + pluginlib 导出（测试专用）
 ├─ config/
 │  ├─ terminal_bridge.yaml      生产配置片段（operator YAML 里复制）
 │  └─ terminal_test.yaml        测试 executor 配置（桥 + 测试源/汇）
 ├─ test/
 │  ├─ test_payload_codec.cpp    golden bytes
-│  ├─ test_link.cpp             socketpair + 假时钟
-│  ├─ bridge_link_test.cpp      无 ROS 的 Link 服务端，供客户端 ipc_probe 连
-│  ├─ source_sink.cpp           TerminalTestSource / TerminalTestSink（测试组件）
-│  └─ plugins-test.xml          测试插件的 pluginlib 描述（不进生产 YAML）
+│  ├─ test_link.cpp             临时 UDS 路径 + 假时钟
+│  └─ bridge_link_test.cpp      无 ROS 的 Link 服务端，供客户端 ipc_probe 连
 ├─ docs/
 │  ├─ design.md                 本文
 │  └─ ipc-protocol.md           与客户端共用的线格式副本
@@ -137,7 +133,7 @@ rmcs_terminal_bridge/
 - `link` 不依赖 ROS，测试不需要起 `rmcs_executor`。
 - `TerminalBridgeRx` 继承 `Component` + `rclcpp::Node`（读参数）；`TerminalBridgeTx` 只继承 `Component`（无参数）。
 - `TerminalBridgeTx` 不导出插件；由 Rx 用 `create_partner_component` 创建。
-- `TerminalTestSource`/`Sink` 只在 `config/terminal_test.yaml` 里出现，生产 YAML 不加载；`plugins-test.xml` 单独导出。
+- `link`/`payload_codec` header-only；`TerminalBridgeRx`/`TerminalBridgeTx` 直接定义在 `src/component.cpp`，`TerminalTestSource`/`Sink` 单独放在 `src/test_components.cpp`；类描述都写在主 `plugins.xml` 里，但测试类只在 `config/terminal_test.yaml` 中被实例化，生产 YAML 不列。
 - `docs/ipc-protocol.md` 与 `Alliance-Terminal/docs/ipc-protocol.md` 同内容；头部有版本/日期/正文 SHA256；修改必须同步对端。
 
 ---
@@ -258,7 +254,7 @@ private:
 
 | 方法 | 调用方 | 职责 |
 |---|---|---|
-| `open()` | Rx `before_updating`/`update` | 建目录、unlink、bind、listen、chmod |
+| `open()` | Rx `before_updating`/`update` | 检查目录、unlink、bind、listen、chmod（目录由宿主建，避免 root 属主 0700） |
 | `poll_recv(now)` | Rx `update` | accept、recv、握手、解 `DownData` + `CustomByteBlock`、维护 peer seq/session |
 | `take_down(packet)` | Rx `update` | 取最新下行数据段 |
 | `poll_send(now, up)` | Tx `update` | 发 `HELLO_ACK`、75 Hz `UpData`、1 Hz `Health`；组官方 envelope |
@@ -330,14 +326,15 @@ target_link_libraries(rmcs_terminal_bridge_component PRIVATE teleop::ipc)
 
 ## 8. RMCS 集成
 
-### 8.1 子模块
+### 8.1 放置方式
 
 ```text
 RMCS/
-└─ rmcs_ws/src/rmcs_terminal_bridge   # git submodule → Alliance-Algorithm/rmcs_terminal_bridge
+└─ rmcs_ws/src/rmcs_terminal_bridge   # 手动拉取；不强制子模块
 ```
 
-- `.gitmodules` 加一项；子模块指向桥仓的固定 commit。
+- 需要时手动 `git clone`/`git pull` 到这个目录；不是每个分支都需要桥。
+- 如果以后决定做子模块，再加 `.gitmodules` 并指向固定 commit；当前不强制。
 - 桥仓是 private 时，RMCS 的 public clone 需要权限；README 写明。
 
 ### 8.2 插件
@@ -440,7 +437,7 @@ docker run -d --restart=always --privileged --network=host \
 | 测试 | 覆盖 |
 |---|---|
 | `test_payload_codec` | `CustomControl`/`CustomByteBlock` golden bytes、空/最大、未知字段、截断、`size` 越界 |
-| `test_link` | socketpair + 假时钟：握手、版本不匹配、握手超时、75 Hz 节奏、`EAGAIN` 丢弃、单客户端替换、下行 decode、seq/计数 |
+| `test_link` | 临时 UDS 路径 + 假时钟：握手、版本不匹配、握手超时、75 Hz 节奏、`EAGAIN` 丢弃、单客户端替换、下行 decode、seq/计数、peercred |
 | colcon 构建 | 插件能链接、`ClassLoader` 能找到 Rx、Tx partner 能注册接口 |
 | 跨端（I0，可选） | 客户端 `ipc_probe` ↔ 桥 Link / RMCS executor；见 §10.1；不进入桥仓构建 |
 
@@ -458,16 +455,18 @@ docker run -d --restart=always --privileged --network=host \
 
 ## 11. 路线（桥仓自己的批次）
 
-| 批次 | 内容 | 出口 |
-|---|---|---|
-| D0 文档/骨架 | 本文、README、package.xml/CMakeLists/plugins.xml、`.clang-format`、`.gitignore` | 能 configure（空组件） |
-| D1 types + codec | `types.hpp`、`payload_codec`、golden 测试 | `test_payload_codec` 绿 |
-| D2 Link + Rx/Tx | `link`、`TerminalBridgeRx`、`TerminalBridgeTx`、socketpair 测试 | `test_link` 绿 |
-| D3 插件/CI | pluginlib 导出、YAML 片段、RMCS 镜像 CI | `colcon build` + gtest 绿 |
-| D4 两端联调 | 客户端 `ipc_probe` + `bridge_link_test`；RMCS executor + TestSource/Sink | Link/组件两级绿 |
-| D5 运行时 | RMCS 子模块、operator YAML、rmcs-runtime 部署 + 宿主 probe | 运行时 75/50 Hz、socket/uid/peercred 清单 |
+| 批次 | 状态 | 内容 | 出口 |
+|---|---|---|---|
+| D0 文档/骨架 | ✅ | 本文、README、package.xml/CMakeLists/plugins.xml、`.clang-format`、`.gitignore` | 能 configure（空组件） |
+| D1 types + codec | ✅ | `types.hpp`、`payload_codec`、golden 测试 | `test_payload_codec` 绿 |
+| D2 Link + Rx/Tx | ✅ | `link`、`TerminalBridgeRx`、`TerminalBridgeTx`、临时 UDS 路径测试 | `test_link` 绿 |
+| D3 插件/CI | 🟡 | pluginlib 导出、YAML 片段、RMCS 镜像 CI | pluginlib/YAML 已完成；**CI 工作流未加** |
+| D4 两端联调 | ✅ | 客户端 `ipc_probe` + `bridge_link_test`；RMCS executor + TestSource/Sink；`launch-rmcs` + `rmcs_bringup/config/terminal_bridge_test.yaml` | Link/组件/launch 三级通过；10 s 客户端侧 `rx_up=750`、`tx_down=500`、`gaps=0`、`down_drop=0` |
+| D5 运行时 | ⬜ | RMCS 手动放置、operator YAML、rmcs-runtime 部署 + 宿主 probe | 运行时 75/50 Hz、`0666`/`allowed_uid=1000`/`--peer-uid 0`、60 s、restart、慢消费者 |
 
 > D0–D3 与客户端 B2b 并行；D4/D5 对应客户端 I0。
+>
+> **2026-11-21**：D4 的 Link/组件/launch 三级已通过；launch 级为容器内 `launch-rmcs` + `rmcs_bringup/config/terminal_bridge_test.yaml`，宿主 `ipc-probe` 跑 10 s，客户端侧 `rx_up=750`、`tx_down=500`、`gaps=0`、`down_drop=0`。**D5 未跑**：`rmcs-runtime` root、`0666`/`allowed_uid=1000`/`--peer-uid 0`、60 s 稳定、kill/restart、慢消费者、两端计数对齐。
 
 ---
 
@@ -477,7 +476,7 @@ docker run -d --restart=always --privileged --network=host \
 |---|---|---|
 | 桥仓 private，RMCS public | 外部 clone 需要权限 | README 写明；或后续转 public |
 | vendor 快照来源 commit 未定 | 无法追溯 | `ORIGIN.md` 记录 B2 工作区/日期；B2 提交后补 commit |
-| 测试组件混进生产 | 生产 YAML 多加载组件 | `plugins-test.xml` 单独；生产 YAML 只列 Rx；CI grep |
+| 测试组件混进生产 | 生产 YAML 多加载组件 | 测试类在主 `plugins.xml`，但只有 YAML 引用才实例化；生产 YAML 只列 Rx + 作者；CI grep |
 | 单组件循环依赖 | RMCS 起不来 | Rx/Tx 拆分 + 共享 `Link`；不把 Link 做成 executor 接口 |
 | `create_partner_component` 生命周期 | 悬空引用 | Rx/Tx 各持 `shared_ptr<Link>`；executor 先 join 更新线程 |
 | rmcs-runtime root 的 socket 权限 | 节点连不上 | 0666 + `allowed_uid` + 节点 `allowed_peer_uid` + 目录 0700 |
@@ -496,3 +495,8 @@ docker run -d --restart=always --privileged --network=host \
 | v0.1 | 2026-11-20 | 设计草稿：Rx/Tx 双组件 + 共享 Link、数据段/官方 envelope/IPC 三层、rmcs-runtime 部署、FetchContent pin |
 | v0.2 | 2026-11-20 | IPC 两端优先：客户端 `ipc_probe` / `bridge_link_test` / TestSource-Sink 三级联调；roadmap D4/D5；开发期 FetchContent 本地覆盖；共用文档副本 |
 | v0.3 | 2026-11-20 | 桥仓改为 **vendored `teleop_ipc`**：`third_party/teleop_ipc` + `add_subdirectory`；移除 FetchContent/FETCHCONTENT_SOURCE_DIR；D0 构建自包含 |
+| v0.4 | 2026-11-20 | **D1–D4 功能落地**：`payload_codec`、`Link`（握手/替换/75 Hz/1 Hz/`EAGAIN`/peercred）、`TerminalBridgeRx`/`TerminalBridgeTx`、`bridge_link_test`、`TerminalTestSource/Sink` 与 `terminal_test.yaml`；colcon gtest 与客户端 `ipc-probe` 联调通过；D3 CI 工作流未加 |
+| v0.5 | 2026-11-20 | 改为 **header-only**（除 `src/component.cpp` 导出入口外无 `.cpp`）；测试组件并入 `include/.../test_components.hpp` 与主 `plugins.xml`，删除独立 `plugins-test.xml`/测试插件库 |
+| v0.6 | 2026-11-20 | 组件风格对齐 `rmcs_core`：`TerminalBridgeRx`/`TerminalBridgeTx` 与测试源/汇直接写进 `src/component.cpp`，删除 `terminal_bridge_rx/tx.hpp`、`test_components.hpp`；`link`/`payload_codec` 保持 header-only |
+| v0.7 | 2026-11-20 | 测试组件从 `component.cpp` 拆到独立的 `src/test_components.cpp`；仍编进同一组件库、由主 `plugins.xml` 描述，生产 YAML 不加载 |
+| v0.8 | 2026-11-21 | 文档跟进：D0–D4 标完成、D3 标 🟡（CI 未加）、D5 标 ⬜；记录 launch 级容器↔宿主 10 s 联调（750/500、无 gaps/drop）；剩余 runtime root/60 s/restart/慢消费者/两端计数 |

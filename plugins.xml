@@ -1,5 +1,11 @@
 <library path="rmcs_terminal_bridge_component">
   <class type="rmcs_terminal_bridge::TerminalBridgeRx" base_class_type="rmcs_executor::Component">
-    <description>RMCS ↔ Alliance Terminal control link bridge (skeleton; Rx owner).</description>
+    <description>RMCS terminal bridge: UDS server for the Alliance Terminal control link (Rx owner).</description>
+  </class>
+  <class type="rmcs_terminal_bridge::TerminalTestSource" base_class_type="rmcs_executor::Component">
+    <description>Test-only source for the terminal bridge uplink; not loaded by production YAML.</description>
+  </class>
+  <class type="rmcs_terminal_bridge::TerminalTestSink" base_class_type="rmcs_executor::Component">
+    <description>Test-only sink for the terminal bridge downlink; not loaded by production YAML.</description>
   </class>
 </library>

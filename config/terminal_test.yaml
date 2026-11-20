@@ -1,0 +1,17 @@
+rmcs_executor:
+  ros__parameters:
+    update_rate: 1000.0
+    components:
+      - rmcs_terminal_bridge::TerminalBridgeRx -> terminal_bridge
+      - rmcs_terminal_bridge::TerminalTestSource -> terminal_test_source
+      - rmcs_terminal_bridge::TerminalTestSink -> terminal_test_sink
+
+terminal_bridge:
+  ros__parameters:
+    socket_path: /tmp/rmcs_terminal_bridge_test.sock
+    socket_mode: "0600"
+    allowed_uid: -1
+    send_rate_hz: 75.0
+    health_rate_hz: 1.0
+    protocol_rev: "2027-V1.0.0"
+    handshake_timeout_ms: 2000
