@@ -1,0 +1,9 @@
+terminal_bridge:
+  ros__parameters:
+    socket_path: /home/pigeon/.local/state/teleop/run/rmcs/control.sock
+    socket_mode: "0666"
+    allowed_uid: 1000
+    send_rate_hz: 75.0
+    health_rate_hz: 1.0
+    protocol_rev: "2027-V1.0.0"
+    handshake_timeout_ms: 2000

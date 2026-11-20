@@ -1,0 +1,5 @@
+<library path="rmcs_terminal_bridge_component">
+  <class type="rmcs_terminal_bridge::TerminalBridgeRx" base_class_type="rmcs_executor::Component">
+    <description>RMCS ↔ Alliance Terminal control link bridge (skeleton; Rx owner).</description>
+  </class>
+</library>
